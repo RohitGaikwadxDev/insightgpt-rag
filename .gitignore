@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# InsightRAG - generated vector database
+chroma_db/
+
+# InsightRAG - uploaded user documents
+data/uploaded_pdfs/*
+!data/uploaded_pdfs/.gitkeep
