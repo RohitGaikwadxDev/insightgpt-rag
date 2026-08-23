@@ -1,4 +1,4 @@
-# 📚 InsightRAG
+# 📚 InsightGPT-RAG
 
 ### AI-Powered Document Intelligence Assistant
 
