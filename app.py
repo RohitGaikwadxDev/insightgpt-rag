@@ -31,7 +31,7 @@ st.set_page_config(
 
 
 # -----------------------------------------
-# PAGE SCROLLING
+# PAGE SCROLLING & TARGETED CONTAINER STYLING
 # -----------------------------------------
 
 st.markdown(
@@ -48,18 +48,21 @@ st.markdown(
         [data-testid="stMain"] {
             overflow: hidden !important;
         }
+
+        /* Target containers using their custom keys for reliable border thickness */
+        .st-key-active_docs_box, .st-key-chat_window_box {
+            border: 3px solid rgba(120, 120, 120, 0.7) !important;
+            border-radius: 10px !important;
+        }
+
+        /* Increase thickness for single lines / dividers (st.divider) */
+        hr {
+            border-top: 3px solid rgba(120, 120, 120, 0.7) !important;
+        }
     </style>
     """,
     unsafe_allow_html=True
 )
-
-
-# -----------------------------------------
-# SESSION STATE
-# -----------------------------------------
-
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
 
 
 # -----------------------------------------
@@ -75,6 +78,33 @@ os.makedirs(
     UPLOAD_FOLDER,
     exist_ok=True
 )
+
+
+# -----------------------------------------
+# SESSION STATE & AUTO-DISCOVERY
+# -----------------------------------------
+
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+if "deleted_files" not in st.session_state:
+    st.session_state.deleted_files = set()
+
+if "uploader_key" not in st.session_state:
+    st.session_state.uploader_key = 0
+
+if "uploaded_files_list" not in st.session_state:
+    # Auto-discover already uploaded files from disk on app launch
+    existing_files = []
+    if os.path.exists(UPLOAD_FOLDER):
+        for filename in os.listdir(UPLOAD_FOLDER):
+            if filename.lower().endswith(".pdf") and filename not in st.session_state.deleted_files:
+                existing_files.append({
+                    "name": filename,
+                    "chunks": "Existing"
+                })
+    st.session_state.uploaded_files_list = existing_files
+
 
 st.markdown(
     """
@@ -116,14 +146,10 @@ left_side, right_side = st.columns(
 with left_side:
     with st.container(key="left_section"):
 
-
-        # -----------------------------------------
         # APP HEADER
-        # -----------------------------------------
-
-        st.title(
-            "📚 InsightGPT ™",
-            text_alignment="center"
+        st.markdown(
+            "<h1 style='text-align: center;'>📚 InsightGPT ™</h1>",
+            unsafe_allow_html=True
         )
 
         st.markdown(
@@ -137,16 +163,12 @@ with left_side:
             unsafe_allow_html=True
         )
 
-        st.subheader(
-            "AI Powered Document Intelligence Assistant",
-            text_alignment="center"
+        st.markdown(
+            "<h3 style='text-align: center;'>AI Powered Document Intelligence Assistant</h3>",
+            unsafe_allow_html=True
         )
 
-
-    # -----------------------------------------
-    # DOCUMENT UPLOAD
-    # -----------------------------------------
- 
+    # DOCUMENT UPLOAD & ACTIVE DOCUMENTS SECTION
     with st.container(key="upload_section"):
 
         st.markdown(
@@ -160,9 +182,6 @@ with left_side:
                     font-size: 20px !important;
                 }
 
-                .st-key-upload_section [data-testid="stFileUploader"] {
-                    min-height: 400px;
-                }
                 .st-key-left_footer {
                     transform: translateY(-90px);
                 }
@@ -176,58 +195,95 @@ with left_side:
 
         uploaded_file = st.file_uploader(
             "Choose a PDF",
-            type=["pdf"]
+            type=["pdf"],
+            key=f"file_uploader_{st.session_state.uploader_key}"
         )
+
+        if uploaded_file is not None:
+            file_names = [f["name"] for f in st.session_state.uploaded_files_list]
+
+            # Only process if not already listed AND wasn't explicitly deleted during this session
+            if (
+                uploaded_file.name not in file_names
+                and uploaded_file.name not in st.session_state.deleted_files
+            ):
+                file_path = os.path.join(
+                    UPLOAD_FOLDER,
+                    uploaded_file.name
+                )
+
+                with open(file_path, "wb") as file:
+                    file.write(uploaded_file.getbuffer())
+
+                with st.spinner("Processing PDF..."):
+                    result = index_pdf(file_path)
+
+                if result["status"] == "indexed":
+                    st.session_state.uploaded_files_list.append({
+                        "name": result['file_name'],
+                        "chunks": result['chunks']
+                    })
+                    st.success(
+                        f"Indexed {result['chunks']} chunks from {result['file_name']}."
+                    )
+                    st.session_state.uploader_key += 1
+                    st.rerun()
+
+                elif result["status"] == "already_indexed":
+                    st.session_state.uploaded_files_list.append({
+                        "name": result['file_name'],
+                        "chunks": "Existing"
+                    })
+                    st.info(
+                        f"{result['file_name']} is already indexed."
+                    )
+                    st.session_state.uploader_key += 1
+                    st.rerun()
+
         st.divider()
 
-    if uploaded_file is not None:
-
-        file_path = os.path.join(
-            UPLOAD_FOLDER,
-            uploaded_file.name
-        )
-
-        with open(
-            file_path,
-            "wb"
-        ) as file:
-
-            file.write(
-                uploaded_file.getbuffer()
-            )
-
-        st.success(
-            "Document uploaded successfully ✓"
-        )
-
-        with st.spinner(
-            "Processing PDF..."
-        ):
-
-            result = index_pdf(
-                file_path
-            )
-
-        if result["status"] == "indexed":
-
-            st.success(
-                f"Indexed {result['chunks']} "
-                f"chunks from "
-                f"{result['file_name']}."
-            )
-
-        elif result["status"] == "already_indexed":
-
-            st.info(
-                f"{result['file_name']} "
-                f"is already indexed."
-            )
-    
+        # --- SCROLLABLE ACTIVE DOCUMENTS BOX (With Targetable Key) ---
+        st.subheader(f"Active Documents ({len(st.session_state.uploaded_files_list)})")
+        
+        doc_container = st.container(height=280, border=True, key="active_docs_box")
+        with doc_container:
+            if not st.session_state.uploaded_files_list:
+                st.info("No documents uploaded yet.")
+            else:
+                for idx, doc in enumerate(st.session_state.uploaded_files_list):
+                    col_info, col_del = st.columns([3, 1])
+                    with col_info:
+                        st.write(f"📄 **{doc['name']}**")
+                        st.caption(f"Chunks: {doc['chunks']}")
+                    with col_del:
+                        if st.button("🗑️", key=f"del_{doc['name']}", help="Remove document"):
+                            target_path = os.path.join(UPLOAD_FOLDER, doc['name'])
+                            if os.path.exists(target_path):
+                                os.remove(target_path)
+                            
+                            # Clean up embeddings from ChromaDB
+                            try:
+                                import chromadb
+                                for db_path in ["./chroma_db", "./data/chroma_db", "chroma_db"]:
+                                    if os.path.exists(db_path):
+                                        client = chromadb.PersistentClient(path=db_path)
+                                        for collection in client.list_collections():
+                                            try:
+                                                collection.delete(where={"source": doc['name']})
+                                            except Exception:
+                                                pass
+                            except Exception:
+                                pass
+                            
+                            # Track that this file was deleted so the uploader doesn't loop-reload it
+                            st.session_state.deleted_files.add(doc['name'])
+                            
+                            st.session_state.uploaded_files_list.pop(idx)
+                            st.rerun()
 
     # -----------------------------------------
     # LEFT FOOTER
     # -----------------------------------------
-
 
     with st.container(key="left_footer"):
 
@@ -240,14 +296,14 @@ with left_side:
             unsafe_allow_html=True
         )
 
-        st.caption(
-            "Python • Qwen • LangChain • ChromaDB • Streamlit",
-            text_alignment="center"
+        st.markdown(
+            "<div style='text-align: center; color: gray; font-size: 12px;'>Python • Qwen • LangChain • ChromaDB • Streamlit</div>",
+            unsafe_allow_html=True
         )
 
 
 # =========================================================
-# RIGHT SIDE
+# RIGHT SIDE (Chat Window)
 # =========================================================
 
 with right_side:
@@ -259,24 +315,24 @@ with right_side:
         st.header("💬 Chat")
 
         # -----------------------------------------
-        # CHAT BOX
+        # CHAT BOX (With Targetable Key)
         # -----------------------------------------
-        #
-        # ONLY THIS AREA SCROLLS
-        #
 
         chat_box = st.container(
             height=650,
-            border=True
+            border=True,
+            key="chat_window_box"
         )
 
         with chat_box:
 
             if not st.session_state.chat_history:
 
-                st.info(
-                    "Upload a PDF and ask a question to get started."
-                )
+                # Only show the instruction text if no documents are uploaded yet
+                if not st.session_state.uploaded_files_list:
+                    st.info(
+                        "Upload a PDF and ask a question to get started."
+                    )
 
             else:
 
@@ -314,7 +370,6 @@ with right_side:
     # -----------------------------------------
     # INPUT
     # -----------------------------------------
-
     
     question = st.chat_input(
         "Please enter your query..."
